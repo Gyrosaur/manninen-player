@@ -12,6 +12,9 @@ const tracks = [
     { id: 10, title: "Narvan marssi", file: "10_Narvan_marssi", display: "Narvan marssi" }
 ];
 
+// Preloaded images cache
+const imageCache = new Map();
+
 // DOM Elements
 const audioPlayer = document.getElementById('audioPlayer');
 const albumArt = document.getElementById('albumArt');
@@ -37,8 +40,18 @@ let isDragging = false;
 let startX = 0;
 let currentX = 0;
 
+// Preload all images on startup
+function preloadImages() {
+    tracks.forEach(track => {
+        const img = new Image();
+        img.src = `images/${track.file}.jpg`;
+        imageCache.set(track.file, img);
+    });
+}
+
 // Initialize
 function init() {
+    preloadImages();
     loadTrack(currentTrackIndex);
     setupEventListeners();
     setupMediaSession();
@@ -56,11 +69,21 @@ function loadTrack(index) {
     const audioPath = `audio/${track.file}.m4a`;
     const imagePath = `images/${track.file}.jpg`;
     
-    audioPlayer.src = audioPath;
-    albumArt.src = imagePath;
+    // Use cached image if available
+    const cachedImg = imageCache.get(track.file);
+    if (cachedImg && cachedImg.complete) {
+        albumArt.src = cachedImg.src;
+    } else {
+        albumArt.src = imagePath;
+    }
+    
     backgroundBlur.style.backgroundImage = `url(${imagePath})`;
     trackTitle.textContent = track.display;
     trackNumber.textContent = `${index + 1} / ${tracks.length}`;
+    
+    // Load audio
+    audioPlayer.src = audioPath;
+    audioPlayer.load();
     
     // Update button states
     prevBtn.disabled = index === 0;
@@ -72,17 +95,36 @@ function loadTrack(index) {
     // Update Media Session
     updateMediaSession(track);
     
-    // Animation - fast switch
-    albumArt.classList.add('switching');
-    setTimeout(() => albumArt.classList.remove('switching'), 80);
+    // Reset progress
+    progressBar.style.width = '0%';
+    currentTimeEl.textContent = '0:00';
 }
 
-// Play/Pause
+// Play
+function play() {
+    audioPlayer.play().then(() => {
+        isPlaying = true;
+        updatePlayButton();
+    }).catch(err => {
+        console.log('Play error:', err);
+        isPlaying = false;
+        updatePlayButton();
+    });
+}
+
+// Pause
+function pause() {
+    audioPlayer.pause();
+    isPlaying = false;
+    updatePlayButton();
+}
+
+// Toggle Play/Pause
 function togglePlay() {
     if (isPlaying) {
-        audioPlayer.pause();
+        pause();
     } else {
-        audioPlayer.play();
+        play();
     }
 }
 
@@ -94,22 +136,48 @@ function updatePlayButton() {
         playIcon.style.display = 'block';
         pauseIcon.style.display = 'none';
     }
+    
+    // Update Media Session state
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    }
 }
 
 // Navigation
 function prevTrack() {
     if (currentTrackIndex > 0) {
+        const wasPlaying = isPlaying;
+        pause();
         currentTrackIndex--;
         loadTrack(currentTrackIndex);
-        if (isPlaying) audioPlayer.play();
+        if (wasPlaying) {
+            play();
+        }
     }
 }
 
 function nextTrack() {
     if (currentTrackIndex < tracks.length - 1) {
+        const wasPlaying = isPlaying;
+        pause();
         currentTrackIndex++;
         loadTrack(currentTrackIndex);
-        if (isPlaying) audioPlayer.play();
+        if (wasPlaying) {
+            play();
+        }
+    }
+}
+
+// Auto-advance to next track
+function autoNextTrack() {
+    if (currentTrackIndex < tracks.length - 1) {
+        currentTrackIndex++;
+        loadTrack(currentTrackIndex);
+        play();
+    } else {
+        // End of album
+        isPlaying = false;
+        updatePlayButton();
     }
 }
 
@@ -123,9 +191,11 @@ function formatTime(seconds) {
 
 // Update progress
 function updateProgress() {
-    const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100;
-    progressBar.style.width = `${progress}%`;
-    currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
+    if (audioPlayer.duration) {
+        const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100;
+        progressBar.style.width = `${progress}%`;
+        currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
+    }
 }
 
 // Seek
@@ -169,8 +239,8 @@ function handleTouchEnd() {
 // Media Session API for lock screen controls
 function setupMediaSession() {
     if ('mediaSession' in navigator) {
-        navigator.mediaSession.setActionHandler('play', () => audioPlayer.play());
-        navigator.mediaSession.setActionHandler('pause', () => audioPlayer.pause());
+        navigator.mediaSession.setActionHandler('play', play);
+        navigator.mediaSession.setActionHandler('pause', pause);
         navigator.mediaSession.setActionHandler('previoustrack', prevTrack);
         navigator.mediaSession.setActionHandler('nexttrack', nextTrack);
         navigator.mediaSession.setActionHandler('seekto', (details) => {
@@ -183,7 +253,7 @@ function updateMediaSession(track) {
     if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
             title: track.display,
-            artist: 'Manninen',
+            artist: 'Matti Manninen',
             album: 'Manninen',
             artwork: [
                 { src: `images/${track.file}.jpg`, sizes: '512x512', type: 'image/jpeg' }
@@ -208,6 +278,15 @@ function checkUrlHash() {
 // Event Listeners
 function setupEventListeners() {
     // Audio events
+    audioPlayer.addEventListener('timeupdate', updateProgress);
+    
+    audioPlayer.addEventListener('loadedmetadata', () => {
+        durationEl.textContent = formatTime(audioPlayer.duration);
+    });
+    
+    audioPlayer.addEventListener('ended', autoNextTrack);
+    
+    // Sync play state with actual audio state (backup)
     audioPlayer.addEventListener('play', () => {
         isPlaying = true;
         updatePlayButton();
@@ -216,21 +295,6 @@ function setupEventListeners() {
     audioPlayer.addEventListener('pause', () => {
         isPlaying = false;
         updatePlayButton();
-    });
-    
-    audioPlayer.addEventListener('timeupdate', updateProgress);
-    
-    audioPlayer.addEventListener('loadedmetadata', () => {
-        durationEl.textContent = formatTime(audioPlayer.duration);
-    });
-    
-    audioPlayer.addEventListener('ended', () => {
-        if (currentTrackIndex < tracks.length - 1) {
-            nextTrack();
-        } else {
-            isPlaying = false;
-            updatePlayButton();
-        }
     });
     
     // Control buttons
