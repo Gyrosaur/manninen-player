@@ -36,6 +36,7 @@ const swipeHint = document.getElementById('swipeHint');
 // State
 let currentTrackIndex = 0;
 let isPlaying = false;
+let shouldAutoplay = false;
 let isDragging = false;
 let startX = 0;
 let currentX = 0;
@@ -52,22 +53,24 @@ function preloadImages() {
 // Initialize
 function init() {
     preloadImages();
-    loadTrack(currentTrackIndex);
+    loadTrack(currentTrackIndex, false);
     setupEventListeners();
     setupMediaSession();
     checkUrlHash();
     
-    // Hide swipe hint after 5 seconds
     setTimeout(() => {
         swipeHint.style.opacity = '0';
     }, 5000);
 }
 
-// Load track
-function loadTrack(index) {
+// Load track - autoplay parameter controls if it should play after loading
+function loadTrack(index, autoplay = false) {
     const track = tracks[index];
     const audioPath = `audio/${track.file}.m4a`;
     const imagePath = `images/${track.file}.jpg`;
+    
+    // Set autoplay flag - will be used by canplaythrough handler
+    shouldAutoplay = autoplay;
     
     // Use cached image if available
     const cachedImg = imageCache.get(track.file);
@@ -137,45 +140,34 @@ function updatePlayButton() {
         pauseIcon.style.display = 'none';
     }
     
-    // Update Media Session state
     if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
     }
 }
 
-// Navigation
+// Navigation - always autoplay when user clicks next/prev
 function prevTrack() {
     if (currentTrackIndex > 0) {
-        const wasPlaying = isPlaying;
         pause();
         currentTrackIndex--;
-        loadTrack(currentTrackIndex);
-        if (wasPlaying) {
-            play();
-        }
+        loadTrack(currentTrackIndex, true);
     }
 }
 
 function nextTrack() {
     if (currentTrackIndex < tracks.length - 1) {
-        const wasPlaying = isPlaying;
         pause();
         currentTrackIndex++;
-        loadTrack(currentTrackIndex);
-        if (wasPlaying) {
-            play();
-        }
+        loadTrack(currentTrackIndex, true);
     }
 }
 
-// Auto-advance to next track
+// Auto-advance when track ends
 function autoNextTrack() {
     if (currentTrackIndex < tracks.length - 1) {
         currentTrackIndex++;
-        loadTrack(currentTrackIndex);
-        play();
+        loadTrack(currentTrackIndex, true);
     } else {
-        // End of album
         isPlaying = false;
         updatePlayButton();
     }
@@ -236,7 +228,7 @@ function handleTouchEnd() {
     }
 }
 
-// Media Session API for lock screen controls
+// Media Session API
 function setupMediaSession() {
     if ('mediaSession' in navigator) {
         navigator.mediaSession.setActionHandler('play', play);
@@ -270,14 +262,21 @@ function checkUrlHash() {
         const trackNum = parseInt(match[1]) - 1;
         if (trackNum >= 0 && trackNum < tracks.length) {
             currentTrackIndex = trackNum;
-            loadTrack(currentTrackIndex);
+            loadTrack(currentTrackIndex, false);
         }
     }
 }
 
 // Event Listeners
 function setupEventListeners() {
-    // Audio events
+    // CRITICAL: Wait for audio to be ready before autoplay
+    audioPlayer.addEventListener('canplaythrough', () => {
+        if (shouldAutoplay) {
+            shouldAutoplay = false;
+            play();
+        }
+    });
+    
     audioPlayer.addEventListener('timeupdate', updateProgress);
     
     audioPlayer.addEventListener('loadedmetadata', () => {
@@ -286,7 +285,7 @@ function setupEventListeners() {
     
     audioPlayer.addEventListener('ended', autoNextTrack);
     
-    // Sync play state with actual audio state (backup)
+    // Sync state
     audioPlayer.addEventListener('play', () => {
         isPlaying = true;
         updatePlayButton();
@@ -297,7 +296,7 @@ function setupEventListeners() {
         updatePlayButton();
     });
     
-    // Control buttons
+    // Controls
     playBtn.addEventListener('click', togglePlay);
     prevBtn.addEventListener('click', prevTrack);
     nextBtn.addEventListener('click', nextTrack);
@@ -310,7 +309,7 @@ function setupEventListeners() {
     artworkContainer.addEventListener('touchmove', handleTouchMove, { passive: true });
     artworkContainer.addEventListener('touchend', handleTouchEnd);
     
-    // Keyboard shortcuts
+    // Keyboard
     document.addEventListener('keydown', (e) => {
         switch(e.code) {
             case 'Space':

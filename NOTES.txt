@@ -1,0 +1,43 @@
+MANNINEN PLAYER - WEB VERSION
+==============================
+Projekti: /Users/user/Documents/Appihommat/manninen-player/
+GitHub: https://github.com/Gyrosaur/manninen-player
+Live: https://gyrosaur.github.io/manninen-player/
+
+PÄIVITYSHISTORIA:
+-----------------
+1. Luotu web-player iOS-appin pohjalta
+2. Vaihdettu oikeat kansikuvat kansiosta /Documents/Levy/Kuvat/Biisien kannet/
+3. Kuvasuhde muutettu neliöstä vaakaan (4:3)
+4. Lisätty info-osio oikealle puolelle
+5. Animaatio nopeutettu 5x (0.4s -> 0.08s)
+6. Tekstimuutokset: otsikko pois, copyright 2026, App Store linkki
+7. "app coding" -> "web player"
+8. Kuvien preload lisätty
+9. Play/pause logiikka korjattu
+
+NYKYISET ONGELMAT (27.1.2025):
+------------------------------
+ONGELMA 1: Autoplay ei toimi
+- Next/Previous painallus ei aloita soittoa
+- Biisin loputtua seuraava ei ala automaattisesti
+- Tapahtuu sekä Macilla että iPhonella
+- SYYS: Todennäköisesti audio.play() vaatii uuden loadeddata/canplay eventin ennen soittoa
+
+ONGELMA 2: iPhone layout
+- Kuva liian ylhäällä, 10-20% jää selaimen yläpalkin alle
+- Swipe down näyttää piilossa olevan osan hetkeksi
+- SYYS: safe-area-inset-top ei toimi oikein, tai padding puuttuu
+
+KORJAUKSET TEHTÄVÄ:
+-------------------
+1. player.js: Lisää canplaythrough event ennen play() kutsua track-vaihdossa
+2. style.css: Lisää padding-top mobiilille, tarkista safe-area
+
+TIEDOSTOT:
+----------
+- index.html - HTML rakenne
+- style.css - Tyylit
+- player.js - Logiikka
+- audio/ - 10 .m4a tiedostoa
+- images/ - 10 .jpg kuvaa

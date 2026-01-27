@@ -299,6 +299,7 @@ body {
         flex-direction: column;
         gap: 40px;
         padding: 20px;
+        padding-top: 60px;
         overflow-y: auto;
         max-height: 100vh;
     }
@@ -359,7 +360,7 @@ body {
 /* Safe area for notched devices */
 @supports (padding: env(safe-area-inset-top)) {
     .main-layout {
-        padding-top: calc(20px + env(safe-area-inset-top));
+        padding-top: calc(60px + env(safe-area-inset-top));
         padding-bottom: calc(20px + env(safe-area-inset-bottom));
     }
 }
