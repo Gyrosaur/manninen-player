@@ -12,6 +12,9 @@ const tracks = [
     { id: 10, title: "Narvan marssi", file: "10_Narvan_marssi", display: "Narvan marssi" }
 ];
 
+// Detect mobile
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || 'ontouchstart' in window;
+
 // Preloaded images cache
 const imageCache = new Map();
 
@@ -37,6 +40,7 @@ const swipeHint = document.getElementById('swipeHint');
 let currentTrackIndex = 0;
 let isPlaying = false;
 let pendingPlay = false;
+let userHasInteracted = false;
 let isDragging = false;
 let startX = 0;
 let currentX = 0;
@@ -99,19 +103,30 @@ function loadTrack(index) {
     currentTimeEl.textContent = '0:00';
 }
 
-// Play
+// Play with retry logic
 function play() {
-    const playPromise = audioPlayer.play();
-    if (playPromise !== undefined) {
-        playPromise.then(() => {
-            isPlaying = true;
-            pendingPlay = false;
-            updatePlayButton();
-        }).catch(err => {
-            console.log('Play failed, will retry:', err);
-            pendingPlay = true;
-        });
-    }
+    userHasInteracted = true;
+    
+    const attemptPlay = () => {
+        const playPromise = audioPlayer.play();
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                isPlaying = true;
+                pendingPlay = false;
+                updatePlayButton();
+            }).catch(err => {
+                console.log('Play failed:', err);
+                // On mobile, set pending and wait for canplay
+                if (isMobile) {
+                    pendingPlay = true;
+                    // Show play button so user knows to tap again if needed
+                    updatePlayButton();
+                }
+            });
+        }
+    };
+    
+    attemptPlay();
 }
 
 // Pause
@@ -124,6 +139,7 @@ function pause() {
 
 // Toggle Play/Pause
 function togglePlay() {
+    userHasInteracted = true;
     if (isPlaying) {
         pause();
     } else {
@@ -145,42 +161,57 @@ function updatePlayButton() {
     }
 }
 
-// Navigation
+// Navigation - DESKTOP: autoplay, MOBILE: continue if was playing
 function prevTrack() {
+    userHasInteracted = true;
     if (currentTrackIndex > 0) {
-        const wasPlaying = isPlaying;
+        const wasPlaying = isPlaying || pendingPlay;
         audioPlayer.pause();
+        isPlaying = false;
         currentTrackIndex--;
         loadTrack(currentTrackIndex);
+        
         if (wasPlaying) {
             pendingPlay = true;
-            play();
+            // Desktop: play immediately, Mobile: wait for canplay
+            if (!isMobile) {
+                play();
+            }
         }
     }
 }
 
 function nextTrack() {
+    userHasInteracted = true;
     if (currentTrackIndex < tracks.length - 1) {
-        const wasPlaying = isPlaying;
+        const wasPlaying = isPlaying || pendingPlay;
         audioPlayer.pause();
+        isPlaying = false;
         currentTrackIndex++;
         loadTrack(currentTrackIndex);
+        
         if (wasPlaying) {
             pendingPlay = true;
-            play();
+            // Desktop: play immediately, Mobile: wait for canplay
+            if (!isMobile) {
+                play();
+            }
         }
     }
 }
 
 // Auto-advance when track ends
 function autoNextTrack() {
+    userHasInteracted = true;
     if (currentTrackIndex < tracks.length - 1) {
         currentTrackIndex++;
         loadTrack(currentTrackIndex);
         pendingPlay = true;
+        // This should work on mobile too since user already interacted
         play();
     } else {
         isPlaying = false;
+        pendingPlay = false;
         updatePlayButton();
     }
 }
@@ -209,7 +240,7 @@ function seek(e) {
     audioPlayer.currentTime = percent * audioPlayer.duration;
 }
 
-// Swipe handling
+// Swipe handling - only change track, don't seek
 function handleTouchStart(e) {
     isDragging = true;
     startX = e.touches[0].clientX;
@@ -281,9 +312,16 @@ function checkUrlHash() {
 
 // Event Listeners
 function setupEventListeners() {
-    // Retry play when audio is ready
+    // MOBILE: When audio is ready and we have pending play, try to play
     audioPlayer.addEventListener('canplay', () => {
-        if (pendingPlay) {
+        if (isMobile && pendingPlay && userHasInteracted) {
+            play();
+        }
+    });
+    
+    // Also try on loadeddata for mobile
+    audioPlayer.addEventListener('loadeddata', () => {
+        if (isMobile && pendingPlay && userHasInteracted) {
             play();
         }
     });
@@ -304,6 +342,7 @@ function setupEventListeners() {
     });
     
     audioPlayer.addEventListener('pause', () => {
+        // Only update if not pending
         if (!pendingPlay) {
             isPlaying = false;
             updatePlayButton();
@@ -315,10 +354,20 @@ function setupEventListeners() {
     prevBtn.addEventListener('click', prevTrack);
     nextBtn.addEventListener('click', nextTrack);
     
-    // Progress bar
+    // Progress bar - click to seek
     progressContainer.addEventListener('click', seek);
     
-    // Touch/Swipe
+    // Touch seek on progress bar (mobile)
+    progressContainer.addEventListener('touchend', (e) => {
+        const touch = e.changedTouches[0];
+        const rect = progressContainer.getBoundingClientRect();
+        const percent = (touch.clientX - rect.left) / rect.width;
+        if (percent >= 0 && percent <= 1) {
+            audioPlayer.currentTime = percent * audioPlayer.duration;
+        }
+    });
+    
+    // Touch/Swipe on artwork
     artworkContainer.addEventListener('touchstart', handleTouchStart, { passive: true });
     artworkContainer.addEventListener('touchmove', handleTouchMove, { passive: true });
     artworkContainer.addEventListener('touchend', handleTouchEnd);
