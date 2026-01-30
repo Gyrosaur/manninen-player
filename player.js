@@ -12,9 +12,6 @@ const tracks = [
     { id: 10, title: "Narvan marssi", file: "10_Narvan_marssi", display: "Narvan marssi" }
 ];
 
-// Detect mobile
-const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || 'ontouchstart' in window;
-
 // Preloaded images cache
 const imageCache = new Map();
 
@@ -39,8 +36,7 @@ const swipeHint = document.getElementById('swipeHint');
 // State
 let currentTrackIndex = 0;
 let isPlaying = false;
-let pendingPlay = false;
-let userHasInteracted = false;
+let shouldAutoplay = false;
 let isDragging = false;
 let startX = 0;
 let currentX = 0;
@@ -57,7 +53,7 @@ function preloadImages() {
 // Initialize
 function init() {
     preloadImages();
-    loadTrack(currentTrackIndex);
+    loadTrack(currentTrackIndex, false);
     setupEventListeners();
     setupMediaSession();
     checkUrlHash();
@@ -67,13 +63,16 @@ function init() {
     }, 5000);
 }
 
-// Load track
-function loadTrack(index) {
+// Load track - autoplay parameter controls if it should play after loading
+function loadTrack(index, autoplay = false) {
     const track = tracks[index];
     const audioPath = `audio/${track.file}.m4a`;
     const imagePath = `images/${track.file}.jpg`;
     
-    // Use cached image
+    // Set autoplay flag - will be used by canplay handler
+    shouldAutoplay = autoplay;
+    
+    // Use cached image if available
     const cachedImg = imageCache.get(track.file);
     if (cachedImg && cachedImg.complete) {
         albumArt.src = cachedImg.src;
@@ -87,6 +86,12 @@ function loadTrack(index) {
     
     // Load audio
     audioPlayer.src = audioPath;
+    audioPlayer.autoplay = autoplay;
+    if (autoplay) {
+        attemptAutoplay();
+    } else {
+        audioPlayer.load();
+    }
     
     // Update button states
     prevBtn.disabled = index === 0;
@@ -103,43 +108,41 @@ function loadTrack(index) {
     currentTimeEl.textContent = '0:00';
 }
 
-// Play with retry logic
+function attemptAutoplay() {
+    if (!shouldAutoplay) return;
+    const playPromise = audioPlayer.play();
+    if (playPromise && typeof playPromise.then === 'function') {
+        playPromise.then(() => {
+            shouldAutoplay = false;
+        }).catch(() => {
+            // Wait for media readiness events to retry.
+        });
+    } else {
+        shouldAutoplay = false;
+    }
+}
+
+// Play
 function play() {
-    userHasInteracted = true;
-    
-    const attemptPlay = () => {
-        const playPromise = audioPlayer.play();
-        if (playPromise !== undefined) {
-            playPromise.then(() => {
-                isPlaying = true;
-                pendingPlay = false;
-                updatePlayButton();
-            }).catch(err => {
-                console.log('Play failed:', err);
-                // On mobile, set pending and wait for canplay
-                if (isMobile) {
-                    pendingPlay = true;
-                    // Show play button so user knows to tap again if needed
-                    updatePlayButton();
-                }
-            });
-        }
-    };
-    
-    attemptPlay();
+    audioPlayer.play().then(() => {
+        isPlaying = true;
+        updatePlayButton();
+    }).catch(err => {
+        console.log('Play error:', err);
+        isPlaying = false;
+        updatePlayButton();
+    });
 }
 
 // Pause
 function pause() {
     audioPlayer.pause();
     isPlaying = false;
-    pendingPlay = false;
     updatePlayButton();
 }
 
 // Toggle Play/Pause
 function togglePlay() {
-    userHasInteracted = true;
     if (isPlaying) {
         pause();
     } else {
@@ -161,57 +164,30 @@ function updatePlayButton() {
     }
 }
 
-// Navigation - DESKTOP: autoplay, MOBILE: continue if was playing
+// Navigation - always autoplay when user clicks next/prev
 function prevTrack() {
-    userHasInteracted = true;
     if (currentTrackIndex > 0) {
-        const wasPlaying = isPlaying || pendingPlay;
-        audioPlayer.pause();
-        isPlaying = false;
+        pause();
         currentTrackIndex--;
-        loadTrack(currentTrackIndex);
-        
-        if (wasPlaying) {
-            pendingPlay = true;
-            // Desktop: play immediately, Mobile: wait for canplay
-            if (!isMobile) {
-                play();
-            }
-        }
+        loadTrack(currentTrackIndex, true);
     }
 }
 
 function nextTrack() {
-    userHasInteracted = true;
     if (currentTrackIndex < tracks.length - 1) {
-        const wasPlaying = isPlaying || pendingPlay;
-        audioPlayer.pause();
-        isPlaying = false;
+        pause();
         currentTrackIndex++;
-        loadTrack(currentTrackIndex);
-        
-        if (wasPlaying) {
-            pendingPlay = true;
-            // Desktop: play immediately, Mobile: wait for canplay
-            if (!isMobile) {
-                play();
-            }
-        }
+        loadTrack(currentTrackIndex, true);
     }
 }
 
 // Auto-advance when track ends
 function autoNextTrack() {
-    userHasInteracted = true;
     if (currentTrackIndex < tracks.length - 1) {
         currentTrackIndex++;
-        loadTrack(currentTrackIndex);
-        pendingPlay = true;
-        // This should work on mobile too since user already interacted
-        play();
+        loadTrack(currentTrackIndex, true);
     } else {
         isPlaying = false;
-        pendingPlay = false;
         updatePlayButton();
     }
 }
@@ -240,7 +216,7 @@ function seek(e) {
     audioPlayer.currentTime = percent * audioPlayer.duration;
 }
 
-// Swipe handling - only change track, don't seek
+// Swipe handling
 function handleTouchStart(e) {
     isDragging = true;
     startX = e.touches[0].clientX;
@@ -305,24 +281,17 @@ function checkUrlHash() {
         const trackNum = parseInt(match[1]) - 1;
         if (trackNum >= 0 && trackNum < tracks.length) {
             currentTrackIndex = trackNum;
-            loadTrack(currentTrackIndex);
+            loadTrack(currentTrackIndex, false);
         }
     }
 }
 
 // Event Listeners
 function setupEventListeners() {
-    // MOBILE: When audio is ready and we have pending play, try to play
+    // Wait for audio to be ready before autoplay retries
     audioPlayer.addEventListener('canplay', () => {
-        if (isMobile && pendingPlay && userHasInteracted) {
-            play();
-        }
-    });
-    
-    // Also try on loadeddata for mobile
-    audioPlayer.addEventListener('loadeddata', () => {
-        if (isMobile && pendingPlay && userHasInteracted) {
-            play();
+        if (shouldAutoplay) {
+            attemptAutoplay();
         }
     });
     
@@ -330,23 +299,28 @@ function setupEventListeners() {
     
     audioPlayer.addEventListener('loadedmetadata', () => {
         durationEl.textContent = formatTime(audioPlayer.duration);
+        if (shouldAutoplay) {
+            attemptAutoplay();
+        }
+    });
+
+    audioPlayer.addEventListener('loadeddata', () => {
+        if (shouldAutoplay) {
+            attemptAutoplay();
+        }
     });
     
     audioPlayer.addEventListener('ended', autoNextTrack);
     
-    // Sync state with actual audio
-    audioPlayer.addEventListener('playing', () => {
+    // Sync state
+    audioPlayer.addEventListener('play', () => {
         isPlaying = true;
-        pendingPlay = false;
         updatePlayButton();
     });
     
     audioPlayer.addEventListener('pause', () => {
-        // Only update if not pending
-        if (!pendingPlay) {
-            isPlaying = false;
-            updatePlayButton();
-        }
+        isPlaying = false;
+        updatePlayButton();
     });
     
     // Controls
@@ -354,20 +328,10 @@ function setupEventListeners() {
     prevBtn.addEventListener('click', prevTrack);
     nextBtn.addEventListener('click', nextTrack);
     
-    // Progress bar - click to seek
+    // Progress bar
     progressContainer.addEventListener('click', seek);
     
-    // Touch seek on progress bar (mobile)
-    progressContainer.addEventListener('touchend', (e) => {
-        const touch = e.changedTouches[0];
-        const rect = progressContainer.getBoundingClientRect();
-        const percent = (touch.clientX - rect.left) / rect.width;
-        if (percent >= 0 && percent <= 1) {
-            audioPlayer.currentTime = percent * audioPlayer.duration;
-        }
-    });
-    
-    // Touch/Swipe on artwork
+    // Touch/Swipe
     artworkContainer.addEventListener('touchstart', handleTouchStart, { passive: true });
     artworkContainer.addEventListener('touchmove', handleTouchMove, { passive: true });
     artworkContainer.addEventListener('touchend', handleTouchEnd);
