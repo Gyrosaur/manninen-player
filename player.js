@@ -36,7 +36,7 @@ const swipeHint = document.getElementById('swipeHint');
 // State
 let currentTrackIndex = 0;
 let isPlaying = false;
-let shouldAutoplay = false;
+let pendingPlay = false;
 let isDragging = false;
 let startX = 0;
 let currentX = 0;
@@ -53,7 +53,7 @@ function preloadImages() {
 // Initialize
 function init() {
     preloadImages();
-    loadTrack(currentTrackIndex, false);
+    loadTrack(currentTrackIndex);
     setupEventListeners();
     setupMediaSession();
     checkUrlHash();
@@ -63,16 +63,13 @@ function init() {
     }, 5000);
 }
 
-// Load track - autoplay parameter controls if it should play after loading
-function loadTrack(index, autoplay = false) {
+// Load track
+function loadTrack(index) {
     const track = tracks[index];
     const audioPath = `audio/${track.file}.m4a`;
     const imagePath = `images/${track.file}.jpg`;
     
-    // Set autoplay flag - will be used by canplaythrough handler
-    shouldAutoplay = autoplay;
-    
-    // Use cached image if available
+    // Use cached image
     const cachedImg = imageCache.get(track.file);
     if (cachedImg && cachedImg.complete) {
         albumArt.src = cachedImg.src;
@@ -86,11 +83,6 @@ function loadTrack(index, autoplay = false) {
     
     // Load audio
     audioPlayer.src = audioPath;
-    audioPlayer.load();
-
-    if (autoplay) {
-        attemptAutoplay();
-    }
     
     // Update button states
     prevBtn.disabled = index === 0;
@@ -107,36 +99,26 @@ function loadTrack(index, autoplay = false) {
     currentTimeEl.textContent = '0:00';
 }
 
-function attemptAutoplay() {
-    if (!shouldAutoplay) return;
-    const playPromise = audioPlayer.play();
-    if (playPromise && typeof playPromise.then === 'function') {
-        playPromise.then(() => {
-            shouldAutoplay = false;
-        }).catch(() => {
-            // Wait for media readiness events to retry.
-        });
-    } else {
-        shouldAutoplay = false;
-    }
-}
-
 // Play
 function play() {
-    audioPlayer.play().then(() => {
-        isPlaying = true;
-        updatePlayButton();
-    }).catch(err => {
-        console.log('Play error:', err);
-        isPlaying = false;
-        updatePlayButton();
-    });
+    const playPromise = audioPlayer.play();
+    if (playPromise !== undefined) {
+        playPromise.then(() => {
+            isPlaying = true;
+            pendingPlay = false;
+            updatePlayButton();
+        }).catch(err => {
+            console.log('Play failed, will retry:', err);
+            pendingPlay = true;
+        });
+    }
 }
 
 // Pause
 function pause() {
     audioPlayer.pause();
     isPlaying = false;
+    pendingPlay = false;
     updatePlayButton();
 }
 
@@ -163,20 +145,30 @@ function updatePlayButton() {
     }
 }
 
-// Navigation - always autoplay when user clicks next/prev
+// Navigation
 function prevTrack() {
     if (currentTrackIndex > 0) {
-        pause();
+        const wasPlaying = isPlaying;
+        audioPlayer.pause();
         currentTrackIndex--;
-        loadTrack(currentTrackIndex, true);
+        loadTrack(currentTrackIndex);
+        if (wasPlaying) {
+            pendingPlay = true;
+            play();
+        }
     }
 }
 
 function nextTrack() {
     if (currentTrackIndex < tracks.length - 1) {
-        pause();
+        const wasPlaying = isPlaying;
+        audioPlayer.pause();
         currentTrackIndex++;
-        loadTrack(currentTrackIndex, true);
+        loadTrack(currentTrackIndex);
+        if (wasPlaying) {
+            pendingPlay = true;
+            play();
+        }
     }
 }
 
@@ -184,7 +176,9 @@ function nextTrack() {
 function autoNextTrack() {
     if (currentTrackIndex < tracks.length - 1) {
         currentTrackIndex++;
-        loadTrack(currentTrackIndex, true);
+        loadTrack(currentTrackIndex);
+        pendingPlay = true;
+        play();
     } else {
         isPlaying = false;
         updatePlayButton();
@@ -280,17 +274,17 @@ function checkUrlHash() {
         const trackNum = parseInt(match[1]) - 1;
         if (trackNum >= 0 && trackNum < tracks.length) {
             currentTrackIndex = trackNum;
-            loadTrack(currentTrackIndex, false);
+            loadTrack(currentTrackIndex);
         }
     }
 }
 
 // Event Listeners
 function setupEventListeners() {
-    // Wait for audio to be ready before autoplay retries
+    // Retry play when audio is ready
     audioPlayer.addEventListener('canplay', () => {
-        if (shouldAutoplay) {
-            attemptAutoplay();
+        if (pendingPlay) {
+            play();
         }
     });
     
@@ -298,22 +292,22 @@ function setupEventListeners() {
     
     audioPlayer.addEventListener('loadedmetadata', () => {
         durationEl.textContent = formatTime(audioPlayer.duration);
-        if (shouldAutoplay) {
-            attemptAutoplay();
-        }
     });
     
     audioPlayer.addEventListener('ended', autoNextTrack);
     
-    // Sync state
-    audioPlayer.addEventListener('play', () => {
+    // Sync state with actual audio
+    audioPlayer.addEventListener('playing', () => {
         isPlaying = true;
+        pendingPlay = false;
         updatePlayButton();
     });
     
     audioPlayer.addEventListener('pause', () => {
-        isPlaying = false;
-        updatePlayButton();
+        if (!pendingPlay) {
+            isPlaying = false;
+            updatePlayButton();
+        }
     });
     
     // Controls
