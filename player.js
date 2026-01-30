@@ -87,6 +87,10 @@ function loadTrack(index, autoplay = false) {
     // Load audio
     audioPlayer.src = audioPath;
     audioPlayer.load();
+
+    if (autoplay) {
+        attemptAutoplay();
+    }
     
     // Update button states
     prevBtn.disabled = index === 0;
@@ -101,6 +105,20 @@ function loadTrack(index, autoplay = false) {
     // Reset progress
     progressBar.style.width = '0%';
     currentTimeEl.textContent = '0:00';
+}
+
+function attemptAutoplay() {
+    if (!shouldAutoplay) return;
+    const playPromise = audioPlayer.play();
+    if (playPromise && typeof playPromise.then === 'function') {
+        playPromise.then(() => {
+            shouldAutoplay = false;
+        }).catch(() => {
+            // Wait for media readiness events to retry.
+        });
+    } else {
+        shouldAutoplay = false;
+    }
 }
 
 // Play
@@ -269,11 +287,10 @@ function checkUrlHash() {
 
 // Event Listeners
 function setupEventListeners() {
-    // CRITICAL: Wait for audio to be ready before autoplay
-    audioPlayer.addEventListener('canplaythrough', () => {
+    // Wait for audio to be ready before autoplay retries
+    audioPlayer.addEventListener('canplay', () => {
         if (shouldAutoplay) {
-            shouldAutoplay = false;
-            play();
+            attemptAutoplay();
         }
     });
     
@@ -281,6 +298,9 @@ function setupEventListeners() {
     
     audioPlayer.addEventListener('loadedmetadata', () => {
         durationEl.textContent = formatTime(audioPlayer.duration);
+        if (shouldAutoplay) {
+            attemptAutoplay();
+        }
     });
     
     audioPlayer.addEventListener('ended', autoNextTrack);
